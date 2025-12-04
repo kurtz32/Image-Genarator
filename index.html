@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generative AI Image Creator (Multi-Input)</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Lucide Icons for aesthetic buttons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        /* Custom styles for a dark, rounded aesthetic */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0d1117; /* Dark background */
+        }
+        .container-card {
+            background-color: #161b22; /* Slightly lighter card background */
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        }
+        .generate-button {
+            transition: all 0.2s;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+        .generate-button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 10px rgba(0, 0, 0, 0.4);
+        }
+        .image-placeholder {
+            min-height: 400px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: #21262d;
+            border: 2px dashed #30363d;
+        }
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.2);
+            border-top: 4px solid #4ade80; /* Tailwind green-400 */
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .image-slot-drop-area {
+            border: 2px dashed #30363d;
+            background-color: #21262d;
+            cursor: pointer;
+            transition: border-color 0.2s, background-color 0.2s;
+            position: relative;
+        }
+        .image-slot-drop-area:hover {
+            background-color: #2a313b;
+        }
+        
+        .add-image-button {
+            border: 2px solid #30363d;
+            background-color: #1f2937;
+            transition: border-color 0.2s, color 0.2s, background-color 0.2s;
+        }
+        .add-image-button:hover {
+            border-color: #4ade80;
+            color: #4ade80;
+            background-color: #162a22;
+        }
+
+        @media (max-width: 640px) {
+            .image-placeholder {
+                min-height: 250px;
+            }
+            .image-slot-drop-area {
+                width: 100%; /* Full width on mobile */
+                height: 120px;
+            }
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8 min-h-screen flex items-center justify-center">
+
+    <div class="container-card w-full max-w-5xl p-6 md:p-10 rounded-xl">
+        <h1 class="text-3xl font-bold text-center text-white mb-2">Gemini Image Creator</h1>
+        <p class="text-center text-gray-400 mb-6">Provide a text prompt and optionally include up to 5 images for complex generation.</p>
+
+        <!-- Image Uploads Container & Add Button -->
+        <div id="imageUploadsContainer" class="flex flex-wrap gap-4 mb-6">
+            <!-- Dynamic image slots will be inserted here -->
+            
+            <button id="addImageSlotButton" onclick="addImageSlot()" class="add-image-button flex flex-col items-center justify-center w-32 h-32 p-4 rounded-xl text-gray-400 cursor-pointer disabled:opacity-50" title="Add up to 5 images">
+                <i data-lucide="plus-circle" class="w-8 h-8 mb-1"></i>
+                <span>Add Image</span>
+            </button>
+        </div>
+
+        <!-- Input Section -->
+        <div class="flex flex-col md:flex-row gap-4 mb-8">
+            <input type="text" id="promptInput" placeholder="Enter your prompt (e.g., 'Combine these images into a watercolor painting')"
+                   class="flex-grow p-3 bg-gray-700 text-white border border-gray-600 rounded-lg focus:ring-green-400 focus:border-green-400">
+            <button id="generateButton" onclick="generateImage()"
+                    class="generate-button bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-6 rounded-lg flex items-center justify-center disabled:opacity-50">
+                <i data-lucide="sparkles" class="w-5 h-5 mr-2"></i>
+                Generate Image
+            </button>
+        </div>
+
+        <!-- Image Output Section -->
+        <div id="imageOutput" class="image-placeholder rounded-xl relative overflow-hidden">
+            <p id="statusText" class="text-gray-400">Your generated image will appear here.</p>
+        </div>
+
+        <!-- Download Button (New) -->
+        <div id="downloadContainer" class="mt-4 hidden justify-center">
+            <a id="downloadLink" download="gemini_generated_image.png"
+               class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center transition duration-150">
+                <i data-lucide="download" class="w-5 h-5 mr-2"></i>
+                Download Image
+            </a>
+        </div>
+
+        <!-- Error/Status Box -->
+        <div id="messageBox" class="mt-4 hidden p-3 rounded-lg text-sm" role="alert"></div>
+
+    </div>
+
+    <script type="module">
+        // --- Global State for Image Data ---
+        let uploadedImages = []; // Array of { id: string, base64: string, mimeType: string }
+        let nextImageId = 1;
+        const MAX_IMAGES = 5;
+        let isAuthReady = false; // Minimal auth placeholder
+
+        // --- Utility Functions ---
+
+        const setMessageBox = (message, isError = false) => {
+            const box = document.getElementById('messageBox');
+            box.textContent = message;
+            box.classList.remove('hidden', 'bg-red-800/20', 'text-red-300', 'bg-blue-800/20', 'text-blue-300');
+            if (isError) {
+                box.classList.add('bg-red-800/20', 'text-red-300');
+            } else {
+                box.classList.add('bg-blue-800/20', 'text-blue-300');
+            }
+            box.classList.remove('hidden');
+        };
+
+        const hideMessageBox = () => {
+            document.getElementById('messageBox').classList.add('hidden');
+        }
+
+        // --- File Handling UI ---
+
+        const updateAddButtonState = () => {
+            const button = document.getElementById('addImageSlotButton');
+            if (uploadedImages.length >= MAX_IMAGES) {
+                button.disabled = true;
+                button.title = `Maximum of ${MAX_IMAGES} images reached.`;
+            } else {
+                button.disabled = false;
+                button.title = "Add another image slot.";
+            }
+        }
+
+        const createImageSlot = (id) => {
+            const slotHtml = `
+                <div id="slot-${id}" class="image-slot-drop-area w-32 h-32 p-1 rounded-xl flex flex-col items-center justify-center text-center text-gray-400 transition"
+                    ondragover="event.preventDefault(); this.classList.add('border-green-400', 'bg-gray-700/50')"
+                    ondragleave="this.classList.remove('border-green-400', 'bg-gray-700/50')"
+                    ondrop="event.preventDefault(); this.classList.remove('border-green-400', 'bg-gray-700/50'); handleDrop(event, '${id}')"
+                    onclick="document.getElementById('fileInput-${id}').click()">
+                    
+                    <input type="file" id="fileInput-${id}" class="hidden" accept="image/*" onchange="handleImageFileChange(event, '${id}')">
+                    
+                    <img id="preview-${id}" class="w-full h-full object-contain p-1 hidden rounded-lg" alt="Image Preview">
+                    
+                    <div id="promptText-${id}">
+                        <i data-lucide="upload" class="w-6 h-6 mb-1 mx-auto"></i>
+                        <span class="text-xs">Image ${id}</span>
+                    </div>
+
+                    <button id="clearBtn-${id}" onclick="clearImageSlot(event, '${id}')" 
+                        class="absolute top-0 right-0 m-1 bg-red-600 hover:bg-red-700 text-white p-1 rounded-full text-xs hidden" title="Remove image">
+                        <i data-lucide="x" class="w-3 h-3"></i>
+                    </button>
+                </div>
+            `;
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = slotHtml.trim();
+            return tempDiv.firstChild;
+        }
+
+        window.addImageSlot = () => {
+            if (uploadedImages.length >= MAX_IMAGES) {
+                setMessageBox(`You can only upload a maximum of ${MAX_IMAGES} images.`, true);
+                return;
+            }
+
+            const newId = nextImageId++;
+            const slotElement = createImageSlot(newId);
+            const container = document.getElementById('imageUploadsContainer');
+            // Insert the new slot before the 'Add Image' button
+            container.insertBefore(slotElement, document.getElementById('addImageSlotButton'));
+            lucide.createIcons();
+            updateAddButtonState();
+        }
+
+        window.handleImageFileChange = (event, slotId) => {
+            const file = event.target.files[0];
+            if (!file) return;
+            processImageFile(file, slotId);
+        }
+
+        window.handleDrop = (event, slotId) => {
+            const files = event.dataTransfer.files;
+            if (files.length > 0) {
+                // Set the file input to reflect the dropped file
+                const fileInput = document.getElementById(`fileInput-${slotId}`);
+                fileInput.files = files;
+                processImageFile(files[0], slotId);
+            }
+        }
+
+        const processImageFile = (file, slotId) => {
+            if (!file.type.startsWith('image/')) {
+                setMessageBox(`File for slot ${slotId} is not a valid image.`, true);
+                clearImageSlot({ stopPropagation: () => {} }, slotId);
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const base64DataWithPrefix = e.target.result;
+                const base64Data = base64DataWithPrefix.split(',')[1];
+                
+                // Update global state
+                const existingIndex = uploadedImages.findIndex(img => img.id === slotId);
+                const imageObject = {
+                    id: slotId,
+                    base64: base64Data,
+                    mimeType: file.type
+                };
+
+                if (existingIndex > -1) {
+                    uploadedImages[existingIndex] = imageObject;
+                } else {
+                    uploadedImages.push(imageObject);
+                }
+
+                // Update UI for preview
+                document.getElementById(`preview-${slotId}`).src = base64DataWithPrefix;
+                document.getElementById(`preview-${slotId}`).classList.remove('hidden');
+                document.getElementById(`promptText-${slotId}`).classList.add('hidden');
+                document.getElementById(`clearBtn-${slotId}`).classList.remove('hidden');
+                hideMessageBox();
+            };
+            reader.readAsDataURL(file);
+        }
+
+        window.clearImageSlot = (event, slotId) => {
+            if (event && typeof event.stopPropagation === 'function') {
+                event.stopPropagation(); // Prevent click from triggering file input
+            }
+            
+            // Remove from global state
+            uploadedImages = uploadedImages.filter(img => img.id !== slotId);
+            
+            // Remove the slot element
+            const slotElement = document.getElementById(`slot-${slotId}`);
+            if (slotElement) {
+                slotElement.remove();
+            }
+
+            updateAddButtonState();
+        }
+
+        // --- API & Exponential Backoff ---
+
+        const MAX_RETRIES = 5;
+        const BASE_DELAY_MS = 1000;
+
+        async function exponentialBackoffFetch(url, options, maxRetries = MAX_RETRIES) {
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    const response = await fetch(url, options);
+
+                    if (response.status === 429 || response.status >= 500) {
+                        const delay = BASE_DELAY_MS * (2 ** i) + Math.random() * 1000;
+                        console.warn(`Request failed with status ${response.status}. Retrying in ${Math.round(delay)}ms...`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        continue;
+                    }
+
+                    if (!response.ok) {
+                        const errorBody = await response.text();
+                        throw new Error(`API call failed: ${response.status} - ${errorBody}`);
+                    }
+
+                    return response;
+
+                } catch (error) {
+                    if (i === maxRetries - 1) {
+                        throw error;
+                    }
+                    const delay = BASE_DELAY_MS * (2 ** i) + Math.random() * 1000;
+                    console.error(`Attempt ${i + 1} failed: ${error.message}. Retrying...`);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+            }
+            throw new Error("Maximum retry attempts reached.");
+        }
+
+
+        // --- Core Image Generation Logic ---
+
+        window.generateImage = async function() {
+            const promptInput = document.getElementById('promptInput');
+            const prompt = promptInput.value.trim();
+            const imageOutput = document.getElementById('imageOutput');
+            const statusText = document.getElementById('statusText');
+            const generateButton = document.getElementById('generateButton');
+            const downloadContainer = document.getElementById('downloadContainer'); // Get new container
+            const downloadLink = document.getElementById('downloadLink');         // Get new link element
+
+            hideMessageBox();
+            downloadContainer.classList.add('hidden'); // Hide download link before generation starts
+
+            if (!prompt) {
+                setMessageBox("Please enter a creative prompt to generate or modify the image.", true);
+                promptInput.focus();
+                return;
+            }
+            
+            // NOTE: The Imagen model (imagen-4.0-generate-001) does not support multimodal (image+text) input.
+            // If the user provides images, we must inform them that they are being ignored.
+            if (uploadedImages.length > 0) {
+                setMessageBox("Note: The Imagen model currently used for generation does not support modifying input images. Only the text prompt will be used.", false);
+            }
+
+            // 1. Setup Loading State
+            generateButton.disabled = true;
+            generateButton.innerHTML = '<div class="spinner border-t-white border-green-300 w-5 h-5 mr-2"></div> Generating...';
+            
+            if (statusText) {
+                statusText.classList.remove('text-gray-400');
+                statusText.classList.add('text-green-400');
+                statusText.textContent = 'Generating your image using Imagen... This may take a moment.';
+            }
+
+            imageOutput.innerHTML = '<div class="spinner"></div>';
+
+            try {
+                // 2. Define API parameters for Imagen (imagen-4.0-generate-001)
+                const apiKey = ""; 
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`;
+
+                const payload = { 
+                    instances: { prompt: prompt },
+                    parameters: { 
+                        "sampleCount": 1, // Generate one image
+                        // Imagen supports additional parameters like aspect_ratio (e.g., "1:1", "4:3", "16:9") if needed
+                    } 
+                };
+
+                // 3. Make API Call with Exponential Backoff
+                const response = await exponentialBackoffFetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const result = await response.json();
+                
+                // 4. Process the Response (finding the image part)
+                const prediction = result.predictions?.[0];
+
+                if (prediction && prediction.bytesBase64Encoded) {
+                    const base64Data = prediction.bytesBase64Encoded;
+                    // Imagen typically returns PNG, we set the mime type explicitly
+                    const mimeType = 'image/png';
+                    const imageUrl = `data:${mimeType};base64,${base64Data}`;
+                    
+                    // 5. Display the Image and Download Link (SUCCESS)
+                    imageOutput.innerHTML = `<img src="${imageUrl}" alt="${prompt}" class="w-full h-auto object-contain rounded-xl">`;
+                    setMessageBox("Image successfully generated using Imagen! You can now download it.", false);
+                    
+                    // Set download link properties
+                    downloadLink.href = imageUrl;
+                    downloadLink.download = `imagen_image_${Date.now()}.png`; // Unique filename
+                    downloadContainer.classList.remove('hidden'); // Show the download button
+
+                } else {
+                    // Handle cases where the response structure is unexpected or content is missing
+                    throw new Error("Imagen generation failed to return image data. Check the model response structure.");
+                }
+
+            } catch (error) {
+                console.error("Image generation failed:", error);
+                // 6. Handle Error State
+                imageOutput.innerHTML = `
+                    <div class="text-red-400 text-center p-4">
+                        <i data-lucide="alert-triangle" class="w-8 h-8 mx-auto mb-2"></i>
+                        <p class="text-lg font-semibold">Generation Failed</p>
+                        <p class="text-sm">Error: ${error.message}. Try a different prompt or check console.</p>
+                    </div>
+                `;
+                lucide.createIcons(); // Re-render icon in error state
+                setMessageBox(`Error: ${error.message || "An unknown error occurred during Imagen generation."}`, true);
+            } finally {
+                // 7. Reset Button State
+                generateButton.disabled = false;
+                generateButton.innerHTML = '<i data-lucide="sparkles" class="w-5 h-5 mr-2"></i> Generate Image';
+                // Re-render icon in final state
+                lucide.createIcons();
+            }
+        }
+
+        // Initialize Lucide icons and add the first slot on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            lucide.createIcons();
+            isAuthReady = true;
+            // Add the initial image slot for a better starting experience
+            addImageSlot(); 
+        });
+    </script>
+</body>
+</html>
